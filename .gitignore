@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+# Cached market data. Regenerate with the data loader; kept out of git so a risk
+# calculation is never silently affected by someone else's stale snapshot.
+data/.cache/
+outputs/*.csv
+outputs/*.pdf
+outputs/*.png

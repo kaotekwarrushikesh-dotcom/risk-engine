@@ -1,0 +1,19 @@
+# Core
+pandas>=2.0
+numpy>=1.24
+scipy>=1.11
+
+# Statistical / risk modelling
+statsmodels>=0.14
+arch>=6.0
+
+# Data
+yfinance>=0.2.40
+requests>=2.31
+
+# Visualisation and application
+plotly>=5.20
+streamlit>=1.30
+
+# Tests
+pytest>=8.0
