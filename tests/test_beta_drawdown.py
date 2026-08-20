@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.beta import align_returns, compute_beta, rolling_beta
-from src.risk.drawdown import drawdown_series, drawdown_summary, identify_drawdown_episodes
+from risk_engine.beta import align_returns, compute_beta, rolling_beta
+from risk_engine.drawdown import drawdown_series, drawdown_summary, identify_drawdown_episodes
 
 
 # --- Beta ----------------------------------------------------------------------------------

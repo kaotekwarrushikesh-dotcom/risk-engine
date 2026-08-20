@@ -15,8 +15,8 @@ from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.var_historical import historical_var
-from src.risk.var_parametric import (
+from risk_engine.var_historical import historical_var
+from risk_engine.var_parametric import (
     MAX_DEGREES_OF_FREEDOM,
     estimate_degrees_of_freedom,
     fit_distribution,

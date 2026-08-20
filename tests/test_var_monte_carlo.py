@@ -14,8 +14,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.var_historical import historical_var
-from src.risk.var_monte_carlo import (
+from risk_engine.var_historical import historical_var
+from risk_engine.var_monte_carlo import (
     MIN_SIMULATED_TAIL,
     convergence_path,
     monte_carlo_var,

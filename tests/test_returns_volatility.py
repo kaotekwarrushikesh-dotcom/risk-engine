@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.returns import (
+from risk_engine.returns import (
     annualise_return,
     compute_returns,
     cumulative_return,
@@ -17,7 +17,7 @@ from src.risk.returns import (
     simple_returns,
     to_price_index,
 )
-from src.risk.volatility import (
+from risk_engine.volatility import (
     annualise_volatility,
     historical_volatility,
     identify_volatility_spikes,

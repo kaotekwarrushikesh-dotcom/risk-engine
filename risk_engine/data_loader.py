@@ -28,10 +28,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from config.settings import CACHE_DIR, DELAYED_AFTER_MINUTES, MIN_OBSERVATIONS, STALE_AFTER_HOURS
+from risk_engine.settings import (
+    CACHE_DIR,
+    DELAYED_AFTER_MINUTES,
+    MIN_OBSERVATIONS,
+    STALE_AFTER_HOURS,
+)
 
 
 @dataclass(frozen=True)

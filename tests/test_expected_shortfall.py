@@ -17,7 +17,7 @@ from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.expected_shortfall import (
+from risk_engine.expected_shortfall import (
     compare_methods,
     demonstrate_var_subadditivity_failure,
     empirical_tail,

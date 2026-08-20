@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.data_loader import DataStatus, clean_prices, validate_prices
+from risk_engine.data_loader import DataStatus, clean_prices, validate_prices
 
 
 def make_prices(n=100, start="2024-01-01", price=100.0, freq="B") -> pd.DataFrame:

@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: risk-engine
+Version: 0.8.0
+Summary: Live institutional risk engine: VaR, Expected Shortfall, GARCH and backtesting
+Requires-Python: >=3.11
+Requires-Dist: pandas>=2.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.11
+Requires-Dist: statsmodels>=0.14
+Requires-Dist: arch>=6.0
+Requires-Dist: yfinance>=0.2.40
+Requires-Dist: requests>=2.31

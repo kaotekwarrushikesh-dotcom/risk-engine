@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from src.risk.var_parametric import estimate_degrees_of_freedom, fit_distribution
+from risk_engine.var_parametric import estimate_degrees_of_freedom, fit_distribution
 
 DEFAULT_PATHS = 10_000
 DEFAULT_SEED = 20250820

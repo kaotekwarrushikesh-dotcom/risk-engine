@@ -24,6 +24,18 @@ python3 -m venv .venv
 .venv/bin/python -m pytest tests/ -q
 ```
 
+The engine is a pip-installable package, so other projects can depend on the calculations
+without vendoring a copy of them:
+
+```bash
+pip install "git+https://github.com/kaotekwarrushikesh-dotcom/risk-engine.git"
+```
+
+```python
+from risk_engine.garch import fit_garch
+from risk_engine.backtesting import backtest_var
+```
+
 ## What "live" means here, precisely
 
 yfinance is a free, unofficial interface to Yahoo Finance with no real-time service level
@@ -405,9 +417,9 @@ model routinely survives them. Sample size travels with every result for that re
 
 ```text
 risk_engine/
-├── config/settings.py          benchmarks, windows, confidence levels, thresholds
 ├── data/                       cached price data (gitignored)
-├── src/risk/
+├── risk_engine/                the installable package
+│   ├── settings.py             benchmarks, windows, confidence levels, thresholds
 │   ├── data_loader.py          fetch, cache, validate, freshness classification
 │   ├── returns.py              simple and log returns, annualisation
 │   ├── volatility.py           historical/rolling volatility, regime, spike detection

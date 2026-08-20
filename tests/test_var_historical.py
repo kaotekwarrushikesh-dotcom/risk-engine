@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.risk.var_historical import (
+from risk_engine.var_historical import (
     AT_THE_EDGE_RATIO,
     MIN_TAIL_OBSERVATIONS,
     breach_rate,

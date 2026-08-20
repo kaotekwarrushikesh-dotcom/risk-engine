@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "risk-engine"
+version = "0.8.0"
+description = "Live institutional risk engine: VaR, Expected Shortfall, GARCH and backtesting"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "arch>=6.0",
+    "yfinance>=0.2.40",
+    "requests>=2.31",
+]
+
+[tool.setuptools.packages.find]
+# Only the library package is distributed. The Streamlit dashboard, notebooks and the
+# stage scripts are development entry points and deliberately stay out of the wheel, so
+# that installing this engine as a dependency pulls in the calculations and nothing else.
+include = ["risk_engine*"]

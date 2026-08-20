@@ -38,9 +38,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from src.risk.var_historical import historical_var
-from src.risk.var_monte_carlo import monte_carlo_var, simulate_paths
-from src.risk.var_parametric import estimate_degrees_of_freedom, fit_distribution, parametric_var
+from risk_engine.var_historical import historical_var
+from risk_engine.var_monte_carlo import monte_carlo_var, simulate_paths
+from risk_engine.var_parametric import estimate_degrees_of_freedom, fit_distribution, parametric_var
 
 MIN_TAIL_OBSERVATIONS = 5
 
