@@ -2,12 +2,13 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 6 of 14 built and tested.** Data ingestion with validation, returns,
-historical and rolling volatility, beta, drawdown, and historical, parametric and Monte Carlo
-VaR all run and are tested against both synthetic edge cases and real market history.
-Expected Shortfall, GARCH, fundamental and valuation risk (reusing Modules 1 and 2), stress
-testing, portfolio risk, backtesting, and the live dashboard are not built yet. This README
-says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
+**Status: Phases 1 to 7 of 14 built and tested.** Data ingestion with validation, returns,
+historical and rolling volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, and
+Expected Shortfall with a five-method comparison all run and are tested against both
+synthetic edge cases and real market history. GARCH, fundamental and valuation risk (reusing
+Modules 1 and 2), stress testing, portfolio risk, backtesting, and the live dashboard are not
+built yet. This README says so rather than implying a finished risk engine.
+See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -245,6 +246,64 @@ against path count so the number of paths is a decision rather than a guess. On 
 itself the finding: a far-tail quantile on fat-tailed data converges slowly, and quoting a
 99% Monte Carlo VaR to three decimal places off 10,000 paths would be quoting noise.
 
+## Phase 7: Expected Shortfall, and every method side by side
+
+    ES(c) = E[loss | loss > VaR(c)]
+
+VaR is a threshold and says nothing about what lies beyond it. Two portfolios can share an
+identical 99% VaR while one loses a further 1% in the tail and the other loses everything,
+and no VaR figure at any confidence level tells them apart. ES averages the losses past the
+threshold instead of reporting where the threshold sits.
+
+**ES is coherent, VaR is not, and the counterexample is built rather than cited.**
+`demonstrate_var_subadditivity_failure()` constructs two independent positions, each losing
+heavily with probability 4%. At 95% neither position's own tail reaches its loss, so each has
+a VaR of -0.02 (a gain). The combined portfolio loses on either event, roughly 8% of the
+time, which does reach into the 95% tail, so its VaR is 0.49 — larger than the sum of the
+parts. VaR says combining two independent positions created risk. ES on the same data gives
+0.51 against a sum of 1.56 and stays subadditive. This is why the Basel Committee moved
+market-risk capital from 99% VaR to 97.5% ES.
+
+**The full comparison, S&P 500, 99%, one day, 10 years of data:**
+
+| Method | Assumption | VaR | ES | ES / VaR |
+|---|---|---|---|---|
+| Historical | none (empirical quantile) | 3.28% | **4.78%** | 1.45x |
+| Parametric (normal) | returns are normal | 2.57% | **2.95%** | 1.15x |
+| Parametric (Student-t) | Student-t, v fitted | 2.74% | **4.53%** | 1.65x |
+| Monte Carlo (bootstrap) | resampled from observed | 3.35% | **4.83%** | 1.44x |
+| Monte Carlo (Student-t) | simulated from fitted t | 2.67% | **4.24%** | 1.59x |
+
+Two findings come out of that table that the VaR work alone did not show.
+
+**The normal assumption fails worse on ES than on VaR.** Its VaR is 22% below the historical
+figure; its ES is 38% below. That is not a coincidence of this sample: a normal distribution
+has a fixed, thin tail shape, so its ES/VaR ratio is pinned near 1.15 at 99% regardless of
+the data, while the real ratio here is 1.45. The error compounds precisely when you ask the
+question ES exists to answer, because the model has no fat tail to average over. Apple shows
+the same pattern (normal ES 4.67% against a historical 6.71%).
+
+**The Student-t is a better model of the tail's shape than of its threshold.** It understates
+VaR (2.74% against 3.28%) while getting ES nearly right (4.53% against 4.78%), and on Apple
+it slightly overshoots (7.01% against 6.71%). A model can be wrong about where the tail
+starts and right about how heavy it is, which is an argument for reporting both numbers
+rather than choosing one.
+
+The bootstrap rows reproduce the historical rows throughout, which is the consistency check
+across the whole phase: five methods, three of them simulated, agreeing where they share
+assumptions and diverging exactly where they do not.
+
+**A bug this phase caught in its own code.** The tail was first selected as
+`values <= quantile`, which looks equivalent to taking the worst `k` observations and is not.
+On a distribution with an atom the comparison can select the entire sample, turning a "5% ES"
+into the mean of everything, and nothing about the resulting number looks wrong. It surfaced
+because the subadditivity demonstration reported ES as non-subadditive, which is
+mathematically impossible and so could only be an implementation error. The tail is now
+defined by rank, and a test pins the atom case directly. A second, smaller version of the same
+class of bug lives in the rounding: `1 - 0.95` is `0.050000000000000044`, so
+`ceil(1000 * (1 - 0.95))` is 51 rather than 50, and that one extra observation is the least
+severe in the tail, dragging every ES toward the middle in the direction that understates risk.
+
 ## Structure
 
 ```text
@@ -259,7 +318,8 @@ risk_engine/
 │   ├── drawdown.py             drawdown series, summary, episode detection
 │   ├── var_historical.py       empirical-quantile VaR, rolling VaR, breach counting
 │   ├── var_parametric.py       normal and Student-t VaR, normality testing, method gap
-│   └── var_monte_carlo.py      simulated VaR, three draw methods, convergence and error
+│   ├── var_monte_carlo.py      simulated VaR, three draw methods, convergence and error
+│   └── expected_shortfall.py   ES per method, coherence demonstration, comparison table
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -276,7 +336,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 7** Expected Shortfall, and a VaR-methods comparison
 - **Phase 8** GARCH(1,1) conditional volatility, re-estimated on every refresh, with residual
   diagnostics and a forecast-vs-realised comparison
 - **Phase 9** Fundamental risk, reusing Module 1's ratios rather than recomputing them
@@ -302,3 +361,19 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
    near-zero R-squared over the last three years is real and reported, not hidden, but it is
    also a reminder that a single point-in-time beta reading is not a permanent property of a
    company.
+5. **Every VaR and ES figure here is unconditional.** They describe the distribution of
+   returns over the whole sample window, not the distribution given that today is volatile.
+   A 99% VaR of 3.28% for the S&P is an average-across-the-decade statement, and the number
+   that matters in a stressed week is higher. Phase 8's GARCH model is what makes the
+   estimate conditional on current volatility rather than blended across calm and crisis.
+6. **Multi-day figures assume independent days**, in every method. Square-root-of-time
+   scaling, parametric horizon scaling and Monte Carlo path simulation all break up the
+   clustering real markets show, and all three err in the same direction: a real stressed
+   fortnight is worse than any of them implies.
+7. **Historical VaR and the bootstrap cannot exceed the worst observed day** at a one-day
+   horizon. This is stated in the output rather than left for the reader to infer, but it
+   means a quiet sample produces a reassuring number for a structural reason rather than an
+   empirical one.
+8. **Tail statistics rest on very few observations.** A 99% VaR on 250 days is supported by
+   about 2.5 points and its ES by about 2. Counts and a bootstrap interval travel with each
+   estimate for that reason, and neither makes the underlying sample any larger.
