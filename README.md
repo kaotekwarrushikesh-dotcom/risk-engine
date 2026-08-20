@@ -2,12 +2,12 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 3 of 14 built and tested.** Data ingestion with validation, returns,
-historical and rolling volatility, beta, and drawdown all run and are tested against both
-synthetic edge cases and real market history. VaR, Expected Shortfall, GARCH, fundamental
-and valuation risk (reusing Modules 1 and 2), stress testing, portfolio risk, backtesting,
-and the live dashboard are not built yet. This README says so rather than implying a
-finished risk engine. See [Roadmap](#roadmap).
+**Status: Phases 1 to 4 of 14 built and tested.** Data ingestion with validation, returns,
+historical and rolling volatility, beta, drawdown, and historical VaR all run and are tested
+against both synthetic edge cases and real market history. Parametric and Monte Carlo VaR,
+Expected Shortfall, GARCH, fundamental and valuation risk (reusing Modules 1 and 2), stress
+testing, portfolio risk, backtesting, and the live dashboard are not built yet. This README
+says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -98,6 +98,54 @@ recovering by January 2024, matching the real event; a second episode in Februar
 (-18.9%) lines up with the same period Phase 2's volatility-spike detector independently
 flagged, which is a useful cross-check since the two were built and tested separately.
 
+## Phase 4: historical VaR
+
+    VaR(c) = the loss exceeded only (1 - c) of the time
+
+Read straight off the empirical distribution: sort the observed returns, take the `1 - c`
+quantile, report it as a positive loss. Nothing is assumed about the shape of the
+distribution, so fat tails and skew are already in the answer rather than modelled into it.
+
+**The defining limitation is asserted in a test, not just described.** Historical VaR is
+bounded below by the worst loss in the sample: it has no mechanism for producing a number
+worse than something that has already happened, so on a quiet sample it reports a small VaR
+*because* nothing bad has occurred yet. Every result therefore carries the worst observed
+loss alongside it, and raises a warning when the estimate sits within 90% of that worst
+loss, which is the point at which the method is reporting the edge of its own data rather
+than measuring a tail.
+
+**How few observations a tail estimate rests on is reported, because the point estimate
+hides it.** A 99% VaR on 250 trading days is a quantile supported by about 2.5 observations,
+and on screen it looks exactly as precise as any other number. Each result carries
+`tail_observations` (how many points actually sit beyond the quantile) and a bootstrap
+confidence interval for the estimate itself, so "3.28%, interval 2.93% to 3.57%" can be told
+apart from the same figure with a much wider one.
+
+Two details that are quietly wrong in many implementations are handled explicitly. **Log
+returns are converted before reporting** (`exp(r) - 1`), since a -5% log return is a 4.88%
+loss, not a 5% one; this is immaterial at one day and material at ten. And **VaR is always a
+positive number meaning a loss**, never a negative return, because a report that mixes the
+two conventions is how a sign error reaches a decision.
+
+Rolling VaR uses only the observations available up to each date, which matters because a
+series contaminated by future data would pass any breach test trivially, and passing that
+test is what Phase 12 exists to check.
+
+**Verified against real market history**, on 10 years of daily data:
+
+| | 95% 1-day VaR | 99% 1-day VaR | Worst day in sample | Breach rate (95%) |
+|---|---|---|---|---|
+| S&P 500 | 1.66% | 3.28% | -11.98% | 5.31% |
+| Apple | 2.78% | 4.84% | -12.86% | 6.15% |
+| GameStop | 6.63% | 13.86% | -60.00% | 5.31% |
+
+The worst days are the real ones: the S&P 500's three deepest losses in ten years are all
+March 2020 (16 March at -11.98%, its worst day since 1987), and GameStop's are 2 and 4
+February and 28 January 2021, the collapse of the short squeeze. Breach rates against a
+252-day rolling VaR land near the 5% the confidence level implies, which is the calibration
+check: materially fewer breaches would mean a model too conservative rather than a safe one,
+and both directions are failures.
+
 ## Structure
 
 ```text
@@ -109,7 +157,8 @@ risk_engine/
 │   ├── returns.py              simple and log returns, annualisation
 │   ├── volatility.py           historical/rolling volatility, regime, spike detection
 │   ├── beta.py                 beta by two methods, cross-checked; rolling beta
-│   └── drawdown.py             drawdown series, summary, episode detection
+│   ├── drawdown.py             drawdown series, summary, episode detection
+│   └── var_historical.py       empirical-quantile VaR, rolling VaR, breach counting
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -126,7 +175,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 4** Historical VaR
 - **Phase 5** Parametric VaR
 - **Phase 6** Monte Carlo VaR, generated dynamically per run rather than a stored result
 - **Phase 7** Expected Shortfall, and a VaR-methods comparison
