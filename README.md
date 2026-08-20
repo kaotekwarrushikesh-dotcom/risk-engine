@@ -2,15 +2,15 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 8 and 12 of 14 built and tested.** Data ingestion with validation,
+**Status: Phases 1 to 8, 12 and 13 of 14 built and tested.** Data ingestion with validation,
 returns, volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, Expected Shortfall,
-GARCH(1,1) conditional volatility, and formal VaR backtesting all run and are tested against
-both synthetic edge cases and real market history. Backtesting was pulled forward from its
+GARCH(1,1) conditional volatility, formal VaR backtesting and an interactive dashboard over
+all of it run and are tested against both synthetic edge cases and real market history. Backtesting was pulled forward from its
 roadmap position because it is what decides whether the GARCH work was worth it, and the
 answer turned out to be a qualified yes rather than a clean one (see
 [Phase 12](#phase-12-backtesting-and-whether-garch-was-actually-worth-it)). Fundamental and
-valuation risk (reusing Modules 1 and 2), stress testing, portfolio risk, and the live
-dashboard are not built yet. This README says so rather than implying a finished risk engine.
+valuation risk (reusing Modules 1 and 2), stress testing and portfolio risk are not built
+yet. This README says so rather than implying a finished risk engine.
 See [Roadmap](#roadmap).
 
 ## Quick start
@@ -22,6 +22,12 @@ python3 -m venv .venv
 
 ```bash
 .venv/bin/python -m pytest tests/ -q
+```
+
+Run the interactive dashboard (any listed ticker, fetched live):
+
+```bash
+.venv/bin/streamlit run app.py
 ```
 
 The engine is a pip-installable package, so other projects can depend on the calculations
@@ -417,6 +423,7 @@ model routinely survives them. Sample size travels with every result for that re
 
 ```text
 risk_engine/
+├── app.py                      the interactive dashboard
 ├── data/                       cached price data (gitignored)
 ├── risk_engine/                the installable package
 │   ├── settings.py             benchmarks, windows, confidence levels, thresholds
@@ -451,7 +458,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 - **Phase 10** Valuation risk and stress testing, reusing Module 2's DCF and WACC, including
   reverse stress testing against the current market price
 - **Phase 11** Portfolio risk: correlation, risk contribution, concentration, Sharpe/Sortino
-- **Phase 13** The live Streamlit dashboard tying all of the above together interactively
 - **Phase 14** Integration with Modules 1 and 2 into one risk view
 
 ## Known limitations so far
