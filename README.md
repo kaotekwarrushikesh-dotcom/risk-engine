@@ -2,9 +2,9 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 4 of 14 built and tested.** Data ingestion with validation, returns,
-historical and rolling volatility, beta, drawdown, and historical VaR all run and are tested
-against both synthetic edge cases and real market history. Parametric and Monte Carlo VaR,
+**Status: Phases 1 to 5 of 14 built and tested.** Data ingestion with validation, returns,
+historical and rolling volatility, beta, drawdown, and historical and parametric VaR all run
+and are tested against both synthetic edge cases and real market history. Monte Carlo VaR,
 Expected Shortfall, GARCH, fundamental and valuation risk (reusing Modules 1 and 2), stress
 testing, portfolio risk, backtesting, and the live dashboard are not built yet. This README
 says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
@@ -146,6 +146,60 @@ February and 28 January 2021, the collapse of the short squeeze. Breach rates ag
 check: materially fewer breaches would mean a model too conservative rather than a safe one,
 and both directions are failures.
 
+## Phase 5: parametric VaR, and what the normal assumption actually costs
+
+    Normal:     VaR(c) = -(mu + z_(1-c) * sigma)
+    Student-t:  VaR(c) = -(mu + t_(1-c),v * sigma * sqrt((v - 2) / v))
+
+Where Phase 4 reads a quantile off the data, this reads it off a fitted distribution. The
+trade runs both ways: a model can produce a loss worse than anything in the sample, which
+historical VaR structurally cannot, but only if the assumed shape is right.
+
+**The assumption is tested, not asserted.** A Jarque-Bera test and the excess kurtosis run
+before any normal VaR is reported, and a rejection produces a warning attached to the number
+itself. Across ten years of daily data the assumption is rejected everywhere, decisively:
+
+| | Excess kurtosis | Skew | Jarque-Bera p | Normal? |
+|---|---|---|---|---|
+| S&P 500 | 16.68 | -0.68 | ~0 | rejected |
+| Apple | 6.60 | -0.11 | ~0 | rejected |
+| GameStop | 44.94 | +0.82 | ~0 | rejected |
+
+(A normal distribution has excess kurtosis of exactly 0.)
+
+**The interesting result is that the error changes sign with the confidence level**, which
+is not what "the normal model understates tail risk" alone would lead you to expect:
+
+| | 95% historical | 95% normal | 99% historical | 99% normal |
+|---|---|---|---|---|
+| S&P 500 | 1.66% | **1.81%** | 3.28% | **2.57%** |
+| Apple | 2.78% | **2.87%** | 4.84% | **4.08%** |
+| GameStop | 6.63% | **10.53%** | 13.86% | **14.58%** |
+
+At 95% the normal model is the *more* conservative of the two; at 99% it understates the
+S&P's tail by 28% and Apple's by 19%. That is the signature of a fat-tailed distribution
+rather than a contradiction: fitting a normal to a fat-tailed sample inflates sigma to
+accommodate the extreme days, which pushes the moderate quantiles out too far while still
+falling short in the far tail. GameStop is the extreme case, where the outliers are violent
+enough that normal VaR overstates the 95% loss by more than half.
+
+The practical consequence is that a normal VaR cannot be described as simply conservative or
+simply optimistic; which one it is depends on where it is read. `normal_vs_historical_gap()`
+reports the gap and its direction rather than assuming either.
+
+**The Student-t variant estimates its degrees of freedom from the data** rather than taking
+a conventional value, and the fits come back low (v of 2.5 to 3.1 across these three), which
+is another read on how fat the tails are. One detail matters and is easy to omit: a standard
+t with v degrees of freedom has variance `v / (v - 2)`, not 1, so the quantile is rescaled by
+`sqrt((v - 2) / v)` before meeting sigma. Skipping that rescale double-counts the spread and
+inflates every t-VaR; a test asserts the rescaled figure and checks the unscaled one would
+have been larger.
+
+Worth stating plainly: at 99% the t still lands below the historical figure for the S&P
+(2.74% against 3.28%), so fitting a fatter distribution narrows the gap without closing it.
+Mean and volatility are also scaled differently across horizons (linearly and by the square
+root respectively), since scaling both by `sqrt(h)` is a common and quietly wrong shortcut.
+
 ## Structure
 
 ```text
@@ -158,7 +212,8 @@ risk_engine/
 │   ├── volatility.py           historical/rolling volatility, regime, spike detection
 │   ├── beta.py                 beta by two methods, cross-checked; rolling beta
 │   ├── drawdown.py             drawdown series, summary, episode detection
-│   └── var_historical.py       empirical-quantile VaR, rolling VaR, breach counting
+│   ├── var_historical.py       empirical-quantile VaR, rolling VaR, breach counting
+│   └── var_parametric.py       normal and Student-t VaR, normality testing, method gap
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -175,7 +230,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 5** Parametric VaR
 - **Phase 6** Monte Carlo VaR, generated dynamically per run rather than a stored result
 - **Phase 7** Expected Shortfall, and a VaR-methods comparison
 - **Phase 8** GARCH(1,1) conditional volatility, re-estimated on every refresh, with residual
