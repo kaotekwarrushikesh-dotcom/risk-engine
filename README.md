@@ -2,12 +2,15 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 7 of 14 built and tested.** Data ingestion with validation, returns,
-historical and rolling volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, and
-Expected Shortfall with a five-method comparison all run and are tested against both
-synthetic edge cases and real market history. GARCH, fundamental and valuation risk (reusing
-Modules 1 and 2), stress testing, portfolio risk, backtesting, and the live dashboard are not
-built yet. This README says so rather than implying a finished risk engine.
+**Status: Phases 1 to 8 and 12 of 14 built and tested.** Data ingestion with validation,
+returns, volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, Expected Shortfall,
+GARCH(1,1) conditional volatility, and formal VaR backtesting all run and are tested against
+both synthetic edge cases and real market history. Backtesting was pulled forward from its
+roadmap position because it is what decides whether the GARCH work was worth it, and the
+answer turned out to be a qualified yes rather than a clean one (see
+[Phase 12](#phase-12-backtesting-and-whether-garch-was-actually-worth-it)). Fundamental and
+valuation risk (reusing Modules 1 and 2), stress testing, portfolio risk, and the live
+dashboard are not built yet. This README says so rather than implying a finished risk engine.
 See [Roadmap](#roadmap).
 
 ## Quick start
@@ -304,6 +307,100 @@ class of bug lives in the rounding: `1 - 0.95` is `0.050000000000000044`, so
 `ceil(1000 * (1 - 0.95))` is 51 rather than 50, and that one extra observation is the least
 severe in the tail, dragging every ES toward the middle in the direction that understates risk.
 
+## Phase 8: GARCH(1,1), and making the estimate conditional
+
+    sigma^2_t = omega + alpha * e^2_(t-1) + beta * sigma^2_(t-1)
+
+Everything in Phases 4 to 7 is **unconditional**. A 99% VaR of 3.28% for the S&P describes
+the whole decade, blending 2017's calm with March 2020. It answers "how bad is a bad day for
+this asset in general" and cannot answer "how bad is a bad day *this week*". GARCH makes
+today's variance a blend of a long-run level, the size of yesterday's shock (`alpha`) and how
+volatile things already were (`beta`), which is what reproduces the most robust empirical fact
+about returns: volatility clusters. Every square-root-of-time scaling in the earlier phases
+assumes precisely the opposite.
+
+**The model is justified before it is fitted.** An ARCH-LM test checks whether there is
+conditional heteroskedasticity to model at all, and a series without it gets a warning that
+the GARCH is fitting noise rather than a silent fit. On the S&P the test returns p = 2.3e-167
+before fitting and p = 0.314 on the standardised residuals afterwards, which is the pair worth
+reporting together: there was overwhelming clustering, and the model absorbed it. Residual
+diagnostics decide whether a fit is usable rather than convergence deciding for them.
+
+The S&P fit: `alpha` 0.157, `beta` 0.841, persistence 0.998, half-life 345 trading days,
+standardised shocks Student-t with 5.1 degrees of freedom. The variance model describes how
+volatility moves and says nothing about the shape of the shocks, so that shape is fitted
+separately and stays fat-tailed.
+
+**A pathology this phase found and suppressed rather than displayed.** The model-implied
+long-run volatility, `omega / (1 - persistence)`, came out at 48.6% annualised for the S&P
+against a realised 18.1%. That figure is a faithful consequence of the fitted parameters and a
+meaningless estimate, because the denominator is 0.002 and the ratio is numerically explosive
+there: moving persistence from 0.995 to 0.999 swings the implied level from roughly 31% to
+69%. Equity indices routinely fit at this persistence, so the case is normal rather than
+exotic. The long-run figure is now flagged unreliable above 0.995 and suppressed from the
+summary, and the volatility regime is judged against realised volatility instead, which is a
+measurement rather than an extrapolation.
+
+Forecasts mean-revert toward the long-run level at a rate set by persistence, so a forecast
+made in a calm stretch rises and one made in a crisis falls. Multi-day volatility sums the
+forecast daily variances rather than scaling one day by `sqrt(h)`, and since those terms are
+unequal, that is exactly the behaviour square-root-of-time cannot represent.
+
+## Phase 12: backtesting, and whether GARCH was actually worth it
+
+Pulled forward from its roadmap position, because without it "GARCH is the better model" is
+an appeal to authority rather than a measurement.
+
+**A VaR model is judged on two independent properties**, and passing one proves nothing about
+the other. *Unconditional coverage* (Kupiec) asks whether there are about the right **number**
+of breaches. *Independence* (Christoffersen) asks whether they are **spread out** or arrive in
+clusters. A model can produce exactly the right count and still be badly wrong if every breach
+lands in the same fortnight, because that means it never adapted to the stress period and was
+simply too high the rest of the time to compensate. That is the test an unconditional VaR is
+expected to fail.
+
+**Rolling one-day 99% VaR, backtested over 10 years, refitting GARCH every 50 days and using
+only data available at each date:**
+
+| | Breaches (exp. ~20) | Kupiec p | Christoffersen p | Coverage | Independence |
+|---|---|---|---|---|---|
+| **S&P 500** | | | | | |
+| Historical (unconditional) | 25 | 0.2921 | **0.0030** | pass | **FAIL** |
+| GARCH (conditional) | 29 | 0.0617 | 0.4373 | pass | pass |
+| **Apple** | | | | | |
+| Historical | 27 | 0.1429 | 0.3755 | pass | pass |
+| GARCH | 21 | 0.8430 | 0.5055 | pass | pass |
+| **Nifty 50** | | | | | |
+| Historical | 21 | 0.7604 | **0.0189** | pass | **FAIL** |
+| GARCH | 32 | **0.0101** | 0.5490 | **FAIL** | pass |
+
+**The honest reading is not "GARCH wins".** What GARCH does reliably is fix the clustering:
+the independence p-value improves on every series tested, and dramatically where it mattered
+(S&P 0.0030 to 0.4373, Nifty 0.0189 to 0.5490). That is the property it was built to fix and
+it fixes it consistently.
+
+Its effect on the breach **count** is inconsistent. On Apple it improves coverage
+substantially (0.1429 to 0.8430); on the S&P it degrades it while staying acceptable (0.2921
+to 0.0617); on the Nifty it over-breaches badly enough to fail outright (32 against an
+expected 20, p = 0.0101). So on the Nifty, GARCH trades a rejected independence test for a
+rejected coverage test, and on the joint test it is the *worse* of the two models there
+(0.0306 against 0.0608).
+
+That result is reported rather than tuned away. The engine's own rule is that a model wrong in
+a known direction, with the evidence for it, is more useful than one adjusted until it agrees,
+and the Nifty case is a real limitation of this GARCH specification on that series, most
+likely a symmetric model applied to a market whose downside shocks are not symmetric. A
+GJR-GARCH or EGARCH variant, which lets negative shocks raise variance more than positive ones
+of the same size, is the obvious next thing to test.
+
+The Basel supervisory traffic light is included too, since it is the crude test with actual
+consequences attached: on 250 days at 99%, up to 4 breaches is green, 5 to 9 yellow with a
+capital multiplier, 10 or more red.
+
+**One caveat stated in the output rather than left implicit**: at 250 observations these tests
+have low power, so "not rejected" is a much weaker statement than it appears, and a mediocre
+model routinely survives them. Sample size travels with every result for that reason.
+
 ## Structure
 
 ```text
@@ -319,7 +416,9 @@ risk_engine/
 │   ├── var_historical.py       empirical-quantile VaR, rolling VaR, breach counting
 │   ├── var_parametric.py       normal and Student-t VaR, normality testing, method gap
 │   ├── var_monte_carlo.py      simulated VaR, three draw methods, convergence and error
-│   └── expected_shortfall.py   ES per method, coherence demonstration, comparison table
+│   ├── expected_shortfall.py   ES per method, coherence demonstration, comparison table
+│   ├── garch.py                GARCH(1,1), ARCH-LM, forecasting, conditional VaR
+│   └── backtesting.py          Kupiec, Christoffersen, Basel traffic light, comparison
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -336,13 +435,10 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 8** GARCH(1,1) conditional volatility, re-estimated on every refresh, with residual
-  diagnostics and a forecast-vs-realised comparison
 - **Phase 9** Fundamental risk, reusing Module 1's ratios rather than recomputing them
 - **Phase 10** Valuation risk and stress testing, reusing Module 2's DCF and WACC, including
   reverse stress testing against the current market price
 - **Phase 11** Portfolio risk: correlation, risk contribution, concentration, Sharpe/Sortino
-- **Phase 12** Backtesting (Kupiec, Christoffersen) and model validation
 - **Phase 13** The live Streamlit dashboard tying all of the above together interactively
 - **Phase 14** Integration with Modules 1 and 2 into one risk view
 
@@ -361,11 +457,11 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
    near-zero R-squared over the last three years is real and reported, not hidden, but it is
    also a reminder that a single point-in-time beta reading is not a permanent property of a
    company.
-5. **Every VaR and ES figure here is unconditional.** They describe the distribution of
-   returns over the whole sample window, not the distribution given that today is volatile.
-   A 99% VaR of 3.28% for the S&P is an average-across-the-decade statement, and the number
-   that matters in a stressed week is higher. Phase 8's GARCH model is what makes the
-   estimate conditional on current volatility rather than blended across calm and crisis.
+5. **The Phase 4 to 7 figures are unconditional; only Phase 8's are not.** A 99% VaR of
+   3.28% for the S&P is an average-across-the-decade statement, and the number that matters
+   in a stressed week is higher. GARCH conditional VaR is the one to use when the question is
+   about now rather than in general, and the backtest in Phase 12 is the evidence for that
+   rather than the assertion.
 6. **Multi-day figures assume independent days**, in every method. Square-root-of-time
    scaling, parametric horizon scaling and Monte Carlo path simulation all break up the
    clustering real markets show, and all three err in the same direction: a real stressed
@@ -377,3 +473,18 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 8. **Tail statistics rest on very few observations.** A 99% VaR on 250 days is supported by
    about 2.5 points and its ES by about 2. Counts and a bootstrap interval travel with each
    estimate for that reason, and neither makes the underlying sample any larger.
+9. **The GARCH specification is symmetric, and that is a real limitation, not a footnote.**
+   A GARCH(1,1) lets a shock raise variance without caring whether it was a gain or a loss,
+   while equity downside shocks raise volatility more than upside ones of the same size. The
+   Nifty backtest is where this shows: conditional VaR over-breaches there (32 against an
+   expected 20, Kupiec p = 0.0101) and fails coverage outright. GJR-GARCH or EGARCH is the
+   fix and is not built yet, so the Nifty conditional figures should be treated as the weakest
+   in the engine.
+10. **The model-implied long-run volatility is suppressed above 0.995 persistence**, because
+   `omega / (1 - persistence)` is numerically explosive there and equity indices routinely fit
+   into that range. Realised volatility is used as the regime benchmark instead. This is the
+   right call and it does mean the engine reports no model-based view of where volatility
+   settles in the long run for most index fits.
+11. **Backtests at 250 observations have low power.** "Not rejected" is a much weaker claim
+   than it looks, and a mediocre model routinely survives. Sample size travels with every
+   backtest result for that reason, but no amount of reporting makes a short sample decisive.
