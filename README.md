@@ -2,9 +2,9 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 5 of 14 built and tested.** Data ingestion with validation, returns,
-historical and rolling volatility, beta, drawdown, and historical and parametric VaR all run
-and are tested against both synthetic edge cases and real market history. Monte Carlo VaR,
+**Status: Phases 1 to 6 of 14 built and tested.** Data ingestion with validation, returns,
+historical and rolling volatility, beta, drawdown, and historical, parametric and Monte Carlo
+VaR all run and are tested against both synthetic edge cases and real market history.
 Expected Shortfall, GARCH, fundamental and valuation risk (reusing Modules 1 and 2), stress
 testing, portfolio risk, backtesting, and the live dashboard are not built yet. This README
 says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
@@ -200,6 +200,51 @@ Worth stating plainly: at 99% the t still lands below the historical figure for 
 Mean and volatility are also scaled differently across horizons (linearly and by the square
 root respectively), since scaling both by `sqrt(h)` is a common and quietly wrong shortcut.
 
+## Phase 6: Monte Carlo VaR
+
+Simulate many possible return paths, read the quantile off the simulated distribution.
+Regenerated on every call rather than stored, since a cached Monte Carlo result is
+indistinguishable from a fixed number while still looking like a simulation.
+
+**The draw method is the whole modelling decision, so it is a parameter rather than a
+default buried in the function.** Three are offered, and they behave exactly as the theory
+says they should on 10 years of S&P 500 data at 99%, one day:
+
+| Method | VaR | Simulation error | Worst simulated day | Beats history? |
+|---|---|---|---|---|
+| Historical (Phase 4) | 3.28% | — | — | — |
+| Monte Carlo, bootstrap | 3.35% | ±0.066% | 11.98% | no |
+| Monte Carlo, normal | 2.58% | ±0.017% | 5.2% | no |
+| Monte Carlo, Student-t | 2.67% | ±0.066% | 18.4% | yes |
+
+The bootstrap reproduces the historical figure to within about one standard error, which is
+the check that resampling has not quietly altered the distribution it is drawing from. Its
+worst simulated day is 11.98%, exactly the worst day in the sample, because resampling
+cannot invent a day that never happened. The normal draw lands on the parametric normal
+figure and produces a worst case of 5.2%, less than half the real worst day, which is what
+the thin-tail assumption looks like when it is made visible. Only the Student-t draw exceeds
+the historical record, at 18.4%, which is the one genuine advantage a parametric simulation
+has over resampling.
+
+**Where the bootstrap's ceiling lifts.** At one day, resampling shares historical VaR's
+structural ceiling and the module says so rather than implying simulation has escaped the
+sample. At ten days it does not: each day is drawn independently, so a path can compound
+several bad draws into something far worse than any single historical day. On the S&P the
+ten-day bootstrap VaR is 8.99% with a worst simulated path of 20.1%, against a worst single
+observed day of 11.98%.
+
+**Independent draws discard volatility clustering, in the direction that flatters.** Real
+bad days arrive in runs; drawing each independently breaks those runs apart, so a simulated
+fortnight is calmer than a real stressed one. Every multi-day result carries that warning,
+and Phase 8's GARCH model is what addresses it.
+
+**Simulation error is measured, not assumed negligible**, by re-running in independent
+batches and reporting the standard error across them. `convergence_path()` tabulates VaR
+against path count so the number of paths is a decision rather than a guess. On the S&P at
+99% the estimate is still drifting slightly at 50,000 paths (0.0329 to 0.0335), which is
+itself the finding: a far-tail quantile on fat-tailed data converges slowly, and quoting a
+99% Monte Carlo VaR to three decimal places off 10,000 paths would be quoting noise.
+
 ## Structure
 
 ```text
@@ -213,7 +258,8 @@ risk_engine/
 │   ├── beta.py                 beta by two methods, cross-checked; rolling beta
 │   ├── drawdown.py             drawdown series, summary, episode detection
 │   ├── var_historical.py       empirical-quantile VaR, rolling VaR, breach counting
-│   └── var_parametric.py       normal and Student-t VaR, normality testing, method gap
+│   ├── var_parametric.py       normal and Student-t VaR, normality testing, method gap
+│   └── var_monte_carlo.py      simulated VaR, three draw methods, convergence and error
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -230,7 +276,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 6** Monte Carlo VaR, generated dynamically per run rather than a stored result
 - **Phase 7** Expected Shortfall, and a VaR-methods comparison
 - **Phase 8** GARCH(1,1) conditional volatility, re-estimated on every refresh, with residual
   diagnostics and a forecast-vs-realised comparison
