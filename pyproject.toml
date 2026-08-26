@@ -17,6 +17,16 @@ dependencies = [
     "requests>=2.31",
 ]
 
+[project.optional-dependencies]
+# Phases 9 and 10 read Module 1's ratios and stress Module 2's DCF. They are optional
+# because the market-risk core of this engine stands on its own, and a consumer who wants
+# VaR should not be made to install two other engines to get it. The modules that need them
+# import lazily and raise a message naming this extra.
+integration = [
+    "financial-statement-intelligence @ git+https://github.com/kaotekwarrushikesh-dotcom/financial-statement-intelligence.git@main",
+    "valuation-engine @ git+https://github.com/kaotekwarrushikesh-dotcom/valuation-engine.git@main",
+]
+
 [tool.setuptools.packages.find]
 # Only the library package is distributed. The Streamlit dashboard, notebooks and the
 # stage scripts are development entry points and deliberately stay out of the wheel, so

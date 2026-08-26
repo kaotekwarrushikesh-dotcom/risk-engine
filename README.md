@@ -2,16 +2,17 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 8 and 11 to 13 of 14 built and tested.** Data ingestion with validation,
+**Status: Phases 1 to 13 of 14 built and tested.** Data ingestion with validation,
 returns, volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, Expected Shortfall,
-GARCH(1,1) conditional volatility, formal VaR backtesting, portfolio risk and an interactive
-dashboard over all of it run and are tested against both synthetic edge cases and real market
-history. Backtesting was pulled forward from its roadmap position because it is what decides
+GARCH(1,1) conditional volatility, formal VaR backtesting, portfolio risk, fundamental risk
+from Module 1's accounts, valuation risk and stress testing on Module 2's DCF, and an
+interactive dashboard over all of it run and are tested against both synthetic edge cases and
+real market history. Backtesting was pulled forward from its roadmap position because it is what decides
 whether the GARCH work was worth it, and the answer turned out to be a qualified yes rather
 than a clean one (see
 [Phase 12](#phase-12-backtesting-and-whether-garch-was-actually-worth-it)). Fundamental and
-valuation risk (reusing Modules 1 and 2) and stress testing are not built yet. This README
-says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
+Only Phase 14, which merges all three engines into a single view, is not built yet. This
+README says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -477,6 +478,77 @@ volatility from 14.2% to 12.6%.
 as downside; Sortino uses downside deviation only. Where they diverge the return distribution
 is asymmetric, and the app says so rather than leaving the reader to compare two numbers.
 
+## Phases 9 and 10: fundamental and valuation risk
+
+These are the phases where the three engines meet. Neither recomputes anything: Phase 9 reads
+Module 1's ratios and Phase 10 shocks Module 2's DCF, so there is one implementation of each
+calculation and no second copy free to drift from it. Both are optional dependencies
+(`pip install "risk-engine[integration]"`), because the market-risk core stands on its own and
+a consumer who wants VaR should not be made to install two other engines to get it.
+
+### Phase 9: fundamental risk
+
+Every earlier phase measures **market** risk, meaning how much the price moves. This measures
+**fundamental** risk, meaning how fragile the business is. The interesting cases are where
+they disagree, and the engine names the divergence:
+
+| | Fundamental risk | Market risk | Verdict |
+|---|---|---|---|
+| Apple | 41 | 32 | the two broadly agree |
+| Pfizer | **52** | 26 | **fundamental risk exceeds market risk** |
+| Tesla | 25 | **100** | **market risk exceeds fundamental risk** |
+
+Pfizer is the case worth dwelling on, and it is the more dangerous of the two divergences: a
+calm share price is not evidence about the balance sheet, and volatility cannot see leverage
+building under a quiet stock. The flags say what the score cannot: interest cover falling 7.4x
+per year and EBITDA margin compressing 4.4 points per year over the last four years, which is
+the real post-pandemic decline showing up in the accounts.
+
+**The question asked here is deliberately different from Module 1's.** Module 1 scores
+financial *health*, which is mostly profitability. This scores financial *risk*, and the two
+diverge in three specific ways:
+
+- **Profitability barely features**, because a highly profitable company can still be fragile.
+- **Direction outweighs level.** A company at 2.5x interest cover that was 8x three years ago
+  is more dangerous than one that has sat at 2.5x throughout. Module 1 reads the latest year
+  and cannot tell them apart; this measures the regression slope over recent years, so a
+  single unusual year cannot decide whether a company is called deteriorating.
+- **Earnings quality gets its own pillar**, since profit not backed by cash is the most useful
+  early warning in published accounts and is invisible in a margin.
+
+Wording is deliberately careful. A ratio cannot prove misconduct, so a persistent gap between
+profit and cash is described as an earnings-quality question worth investigating rather than a
+conclusion.
+
+### Phase 10: valuation risk and reverse stress testing
+
+Valuation risk is not "the DCF says this is expensive". That is a view, and a view is not a
+risk. It is **how far the answer moves when an assumption moves**, and the two are close to
+independent: a valuation can sit exactly on the market price and still be worthless if a
+quarter-point change in the discount rate moves it by half.
+
+On Apple: 70% of enterprise value sits in the terminal value, a 25bp change in WACC moves the
+implied price by 3.5%, and a 50bp change in terminal growth moves it by 4.7%. The sensitivity
+grid reports both assumptions at once, since a one-at-a-time table hides that they interact.
+
+**Reverse stress testing is the part worth having.** Rather than asking what the company is
+worth, it asks what today's price requires and leaves the reader to judge whether that is
+plausible. This is much harder to fool yourself with, because the output is a required
+assumption rather than a comfortable answer. For Apple the market price implies a discount
+rate of 4.33% against the model's 9.35%, and at the model's own WACC it requires terminal
+growth of **7.62% in perpetuity**, which is far above nominal GDP growth and therefore
+something no business has ever sustained. That is a much sharper statement than "the DCF reads
+low".
+
+Module 2's documented calibration bias applies to every level here and is attached to the
+result rather than left in a README. It matters less than it looks: a bias that moves every
+scenario in the same direction affects the level and not the sensitivity, which is what this
+phase measures, and a test pins that a uniform level shift leaves the sensitivity unchanged.
+
+Stress scenarios shock the discount rate and terminal outlook, which this engine can move
+rigorously. A revenue or margin shock belongs in Module 2's own scenario engine, which rebuilds
+the forecast properly, and a cruder copy here would be worse than not having one.
+
 ## Structure
 
 ```text
@@ -496,7 +568,9 @@ risk_engine/
 │   ├── expected_shortfall.py   ES per method, coherence demonstration, comparison table
 │   ├── garch.py                GARCH(1,1), ARCH-LM, forecasting, conditional VaR
 │   ├── backtesting.py          Kupiec, Christoffersen, Basel traffic light, comparison
-│   └── portfolio.py            correlation, risk contribution, concentration, Sharpe/Sortino
+│   ├── portfolio.py            correlation, risk contribution, concentration, Sharpe/Sortino
+│   ├── fundamental.py          balance-sheet fragility from Module 1's ratios
+│   └── valuation_risk.py       sensitivity and reverse stress testing on Module 2's DCF
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -513,9 +587,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 9** Fundamental risk, reusing Module 1's ratios rather than recomputing them
-- **Phase 10** Valuation risk and stress testing, reusing Module 2's DCF and WACC, including
-  reverse stress testing against the current market price
 - **Phase 14** Integration with Modules 1 and 2 into one risk view
 
 ## Known limitations so far

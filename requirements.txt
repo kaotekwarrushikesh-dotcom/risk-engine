@@ -17,3 +17,8 @@ streamlit>=1.30
 
 # Tests
 pytest>=8.0
+
+# The integration tabs need Modules 1 and 2. They are optional for the library but the
+# deployed app offers them, so the app pins them here.
+git+https://github.com/kaotekwarrushikesh-dotcom/financial-statement-intelligence.git@main
+git+https://github.com/kaotekwarrushikesh-dotcom/valuation-engine.git@main

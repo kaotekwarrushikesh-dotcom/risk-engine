@@ -34,6 +34,10 @@ from risk_engine.expected_shortfall import (
     historical_expected_shortfall,
     parametric_expected_shortfall,
 )
+from risk_engine.fundamental import assess as fundamental_risk
+from risk_engine.fundamental import compare_with_market_risk
+from risk_engine.valuation_risk import assess as valuation_risk
+from risk_engine.valuation_risk import stress_test as valuation_stress_test
 from risk_engine.portfolio import (
     analyse_portfolio,
     equal_weights,
@@ -172,7 +176,8 @@ if report.warnings:
 st.divider()
 
 tabs = st.tabs(["Overview", "Volatility", "Beta & drawdown", "Value at Risk",
-                "Expected Shortfall", "GARCH", "Backtest", "Portfolio", "Methodology"])
+                "Expected Shortfall", "GARCH", "Backtest", "Portfolio",
+                "Fundamental", "Valuation", "Methodology"])
 
 # =============================== OVERVIEW =====================================================
 
@@ -727,6 +732,185 @@ with tabs[7]:
 # =============================== METHODOLOGY =========================================================
 
 with tabs[8]:
+    st.markdown("#### Fundamental risk: how fragile is the business?")
+    st.caption(
+        "Every other tab measures how much the share price moves. This measures how fragile "
+        "the underlying business is, from Module 1's filed accounts. They are different "
+        "questions, and the interesting cases are where they disagree: a share can be quiet "
+        "for years while leverage builds underneath it."
+    )
+
+    if st.button("Analyse fundamentals", key="run_fundamental"):
+        with st.spinner("Fetching filings through Module 1..."):
+            try:
+                fr = fundamental_risk(ticker)
+            except ImportError as exc:
+                st.error(str(exc))
+                fr = None
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not analyse {ticker}: {exc}")
+                fr = None
+
+        if fr is not None:
+            st.markdown(f"**{fr.name}** · {fr.source} · FY{fr.first_year} to FY{fr.last_year}")
+
+            f = st.columns(5)
+            f[0].metric("Fundamental risk", f"{fr.overall_risk:.0f}/100", delta=fr.rating,
+                        delta_color="off")
+            f[1].metric("Leverage", f"{fr.leverage_risk:.0f}")
+            f[2].metric("Liquidity", f"{fr.liquidity_risk:.0f}")
+            f[3].metric("Earnings quality", f"{fr.earnings_quality_risk:.0f}")
+            f[4].metric("Deterioration", f"{fr.deterioration_risk:.0f}")
+            st.caption("Higher is riskier throughout, the inverse of Module 1's health score.")
+
+            vol_now = historical_volatility(returns).annualised
+            comparison = compare_with_market_risk(fr, vol_now)
+            box = st.warning if abs(comparison["gap"]) > 25 else st.info
+            box(f"**{comparison['verdict'].capitalize()}.** {comparison['reading']}")
+            st.caption(f"Market risk scored {comparison['basis']}.")
+
+            if fr.flags:
+                st.markdown("**Identified risks**")
+                for flag in fr.flags:
+                    colour = {"critical": RED, "elevated": AMBER}.get(flag.severity, GREY)
+                    st.markdown(
+                        f"<div style='border-left:3px solid {colour};padding:2px 0 2px 10px;"
+                        f"margin-bottom:9px'><b>{flag.category}</b> "
+                        f"<span style='color:{colour};font-size:0.8rem'>"
+                        f"{flag.severity.upper()}</span><br>{flag.finding}<br>"
+                        f"<span style='font-size:0.85rem;color:#888'>{flag.evidence}. "
+                        f"{flag.implication}</span></div>",
+                        unsafe_allow_html=True)
+            else:
+                st.success("No fundamental risk flags raised on the metrics available.")
+
+            st.markdown("**Direction, which matters more than level**")
+            st.caption(
+                "A company at 2.5x interest cover that was 8x three years ago is more "
+                "dangerous than one that has sat at 2.5x throughout. The first is "
+                "deteriorating; the second is a leveraged business model. A latest-year "
+                "score cannot tell them apart, so these are regression slopes over the "
+                "recent period."
+            )
+            trend_rows = []
+            labels = {"interest_coverage": "Interest coverage", "current_ratio": "Current ratio",
+                      "debt_to_equity": "Debt to equity", "ebitda_margin": "EBITDA margin",
+                      "cfo_to_net_income": "Cash conversion"}
+            for key, label in labels.items():
+                slope = fr.trends.get(key, float("nan"))
+                level = fr.latest.get(key, float("nan"))
+                if np.isnan(slope) and np.isnan(level):
+                    continue
+                as_pct = key == "ebitda_margin"
+                trend_rows.append({
+                    "Metric": label,
+                    "Latest": "n/a" if np.isnan(level) else
+                              (f"{level:.1%}" if as_pct else f"{level:.2f}"),
+                    "Change per year": "n/a" if np.isnan(slope) else
+                                       (f"{slope * 100:+.1f} pts" if as_pct else f"{slope:+.2f}"),
+                    "Direction": "n/a" if np.isnan(slope) else
+                                 ("improving" if (slope > 0) != (key == "debt_to_equity")
+                                  else "deteriorating"),
+                })
+            st.dataframe(pd.DataFrame(trend_rows), use_container_width=True, hide_index=True)
+
+            if fr.health_score is not None:
+                st.caption(
+                    f"Module 1 scores this company {fr.health_score:.1f}/100 for financial "
+                    f"*health* ({fr.health_rating}). That is a different question from risk: "
+                    "health is mostly profitability, which a fragile company can still have."
+                )
+            for note in fr.notes:
+                st.caption(f"ℹ️ {note}")
+    else:
+        st.caption("Runs Module 1 live, which takes a few seconds, so it is on demand.")
+
+# =============================== VALUATION RISK ========================================================
+
+with tabs[9]:
+    st.markdown("#### Valuation risk: how much does the answer depend on the assumptions?")
+    st.caption(
+        "Valuation risk is not \"the DCF says this is expensive\". That is a view, and a view "
+        "is not a risk. It is how far the answer moves when an assumption moves, and a "
+        "valuation can sit exactly on the market price and still be worthless if a "
+        "quarter-point change in the discount rate moves it by half."
+    )
+
+    if st.button("Analyse valuation risk", key="run_valuation"):
+        with st.spinner("Running Module 2's valuation and stressing it..."):
+            try:
+                vrisk = valuation_risk(ticker)
+                stress = valuation_stress_test(ticker)
+            except ImportError as exc:
+                st.error(str(exc))
+                vrisk = None
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not value {ticker}: {exc}")
+                vrisk = None
+
+        if vrisk is not None:
+            v = st.columns(5)
+            v[0].metric("Market price", f"{vrisk.currency} {vrisk.share_price:,.2f}")
+            v[1].metric("Model value", f"{vrisk.currency} {vrisk.implied_share_price:,.2f}")
+            v[2].metric("In terminal value", pct(vrisk.terminal_share, 0),
+                        delta=vrisk.assumption_dependence, delta_color="off")
+            v[3].metric("Per 25bp of WACC", pct(abs(vrisk.wacc_sensitivity), 1))
+            v[4].metric("Per 50bp of growth", pct(abs(vrisk.growth_sensitivity), 1))
+
+            st.markdown("**Reverse stress test: what would have to be true?**")
+            st.caption(
+                "Rather than asking what the company is worth, ask what today's price "
+                "requires, then judge whether that is plausible. This is much harder to fool "
+                "yourself with, because it produces a required assumption instead of a "
+                "comfortable answer."
+            )
+            rs = st.columns(2)
+            if vrisk.market_implied_wacc is not None:
+                rs[0].metric("Discount rate the market implies",
+                             pct(vrisk.market_implied_wacc, 2),
+                             delta=f"model uses {vrisk.wacc:.2%}", delta_color="off")
+            if vrisk.market_implied_growth is not None and not np.isnan(
+                    vrisk.market_implied_growth):
+                rs[1].metric("Terminal growth the market requires",
+                             pct(vrisk.market_implied_growth, 2),
+                             delta=f"model assumes {vrisk.terminal_growth:.2%}",
+                             delta_color="off")
+
+            for flag in vrisk.flags:
+                st.warning(flag)
+
+            st.markdown("**Sensitivity grid**")
+            st.caption(
+                "Implied share price across both assumptions at once. A one-at-a-time table "
+                "would hide that they interact."
+            )
+            st.dataframe(vrisk.grid.round(2), use_container_width=True)
+
+            st.markdown("**Stress scenarios**")
+            display = stress.copy()
+            display["wacc"] = display["wacc"].map(lambda x: f"{x:.2%}")
+            display["terminal_growth"] = display["terminal_growth"].map(lambda x: f"{x:.2%}")
+            display["implied_price"] = display["implied_price"].map(lambda x: f"{x:,.2f}")
+            display["vs_base"] = display["vs_base"].map(lambda x: f"{x:+.1%}")
+            display["vs_market"] = display["vs_market"].map(lambda x: f"{x:+.1%}")
+            display.columns = ["Scenario", "WACC", "Terminal growth", "Implied price",
+                               "vs base", "vs market"]
+            st.dataframe(display, use_container_width=True, hide_index=True)
+            st.caption(
+                "Shocks are applied to the discount rate and terminal outlook, which this "
+                "engine can move rigorously. A revenue or margin shock belongs in Module 2's "
+                "own scenario engine, which rebuilds the forecast properly; a cruder copy "
+                "here would be worse than not having one."
+            )
+
+            for note in vrisk.notes:
+                st.caption(f"ℹ️ {note}")
+    else:
+        st.caption("Runs Module 2 live and re-values the company 30+ times, so it is on demand.")
+
+# =============================== METHODOLOGY =========================================================
+
+with tabs[10]:
     st.markdown("""
 #### What this engine will and will not claim
 
