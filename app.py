@@ -34,6 +34,12 @@ from risk_engine.expected_shortfall import (
     historical_expected_shortfall,
     parametric_expected_shortfall,
 )
+from risk_engine.portfolio import (
+    analyse_portfolio,
+    equal_weights,
+    minimum_variance_weights,
+    portfolio_returns_series,
+)
 from risk_engine.garch import conditional_var, fit_garch, forecast_volatility
 from risk_engine.returns import log_returns
 from risk_engine.settings import BENCHMARKS, DEFAULT_BENCHMARK, ROLLING_WINDOWS
@@ -140,28 +146,18 @@ if report.blocking:
 prices = frame["adj_close"]
 returns = log_returns(prices)
 
-# --- Freshness, stated rather than implied ---------------------------------------------------
+# --- Provenance, stated quietly rather than badged ---------------------------------------------
 
-classification = status.classification
-badge = {"DELAYED": AMBER, "STALE": GREY}.get(classification, GREY)
-header = st.columns([1.4, 1, 1, 1, 1.2])
+header = st.columns([1.4, 1, 1, 1.4])
 header[0].markdown(f"### {ticker}")
 header[1].metric("Last close", num(float(prices.iloc[-1])))
 header[2].metric("Observations", f"{len(frame):,}")
 header[3].metric("History", f"{frame.index[0].date()} to {frame.index[-1].date()}")
-header[4].markdown(
-    f"<div style='padding-top:12px'><span style='background:{badge};color:#fff;"
-    f"padding:3px 10px;border-radius:4px;font-size:0.8rem;font-weight:600'>"
-    f"{classification}</span><br><span style='font-size:0.75rem;color:#999'>"
-    f"fetched {status.fetched_at:%d %b %Y, %H:%M} · {status.source}"
-    f"{' · cached' if status.from_cache else ''}</span></div>",
-    unsafe_allow_html=True,
-)
 
 st.caption(
-    "**Never LIVE.** The data provider offers no real-time service guarantee, so this engine "
-    "classifies every fetch as DELAYED or STALE by measured age rather than claiming more "
-    "than the source supports."
+    f"Data fetched {status.fetched_at:%d %b %Y, %H:%M} from {status.source}"
+    f"{', from local cache' if status.from_cache else ''}. This engine never claims real-time "
+    "data; see the Methodology tab for what that means and why."
 )
 
 if report.issues_found:
@@ -176,7 +172,7 @@ if report.warnings:
 st.divider()
 
 tabs = st.tabs(["Overview", "Volatility", "Beta & drawdown", "Value at Risk",
-                "Expected Shortfall", "GARCH", "Backtest", "Methodology"])
+                "Expected Shortfall", "GARCH", "Backtest", "Portfolio", "Methodology"])
 
 # =============================== OVERVIEW =====================================================
 
@@ -222,7 +218,8 @@ with tabs[0]:
 # =============================== VOLATILITY ====================================================
 
 with tabs[1]:
-    window = st.select_slider("Rolling window (trading days)", options=ROLLING_WINDOWS, value=60)
+    window = st.selectbox("Rolling window (trading days)", ROLLING_WINDOWS,
+                          index=ROLLING_WINDOWS.index(60))
     rolling_vol = rolling_volatility(returns, window=window).dropna()
 
     cols = st.columns(4)
@@ -336,7 +333,7 @@ with tabs[2]:
 # =============================== VALUE AT RISK ===================================================
 
 with tabs[3]:
-    horizon = st.select_slider("Horizon (trading days)", options=[1, 5, 10, 20], value=1)
+    horizon = st.selectbox("Horizon (trading days)", [1, 5, 10, 20], index=0)
     portfolio_value = st.number_input("Position size (optional, to express VaR in currency)",
                                       min_value=0.0, value=0.0, step=100_000.0)
     value = portfolio_value if portfolio_value > 0 else None
@@ -584,9 +581,152 @@ with tabs[6]:
         st.caption("The backtest refits GARCH every 50 days across the full history, so it is "
                    "run on demand rather than on every page load.")
 
-# =============================== METHODOLOGY =========================================================
+# =============================== PORTFOLIO ===========================================================
 
 with tabs[7]:
+    st.markdown("#### A portfolio is not the sum of its parts")
+    st.caption(
+        "Every other tab measures one security. Portfolio variance is a quadratic form, not a "
+        "weighted average, and the difference between those two things is the only free lunch "
+        "in finance. This tab measures how much of it a given portfolio actually gets."
+    )
+
+    holdings_input = st.text_input(
+        "Holdings (comma separated)", value=f"{ticker}, MSFT, JNJ, XOM, KO",
+        placeholder="AAPL, MSFT, JNJ, XOM, KO",
+    )
+    scheme = st.radio("Weighting", ["Equal weight", "Minimum variance", "Custom"],
+                      horizontal=True)
+
+    holdings = [t.strip().upper() for t in holdings_input.split(",") if t.strip()]
+
+    if len(holdings) < 2:
+        st.info("Enter at least two holdings. A portfolio of one is the rest of this app.")
+    else:
+        custom = None
+        if scheme == "Custom":
+            raw = st.text_input(
+                "Weights (comma separated, same order; they are rescaled to sum to 100%)",
+                value=", ".join(["1"] * len(holdings)),
+            )
+            try:
+                values = [float(x) for x in raw.split(",") if x.strip()]
+                if len(values) != len(holdings):
+                    raise ValueError(f"{len(values)} weights for {len(holdings)} holdings")
+                custom = dict(zip(holdings, values))
+            except ValueError as exc:
+                st.error(f"Could not read those weights: {exc}")
+                custom = None
+
+        if scheme != "Custom" or custom is not None:
+            with st.spinner(f"Fetching {len(holdings)} holdings..."):
+                data, failed = {}, []
+                for t in holdings:
+                    try:
+                        f, _, _ = load(t, period)
+                        data[t] = log_returns(f["adj_close"])
+                    except Exception as exc:  # noqa: BLE001
+                        failed.append(f"{t} ({exc})")
+
+            for f in failed:
+                st.warning(f"Skipped {f}")
+
+            if len(data) < 2:
+                st.error("Fewer than two holdings could be loaded, so there is no portfolio "
+                         "to analyse.")
+            else:
+                try:
+                    if scheme == "Equal weight":
+                        weights = equal_weights(list(data))
+                    elif scheme == "Minimum variance":
+                        weights = minimum_variance_weights(data)
+                    else:
+                        weights = {k: v for k, v in custom.items() if k in data}
+
+                    result = analyse_portfolio(data, weights)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Could not analyse this portfolio: {exc}")
+                    result = None
+
+                if result is not None:
+                    m = st.columns(5)
+                    m[0].metric("Portfolio volatility", pct(result.annualised_volatility, 1))
+                    m[1].metric("Weighted average", pct(result.weighted_average_volatility, 1),
+                                delta=f"-{result.risk_reduction:.1%} from diversification",
+                                delta_color="off")
+                    m[2].metric("Effective holdings",
+                                f"{result.effective_holdings:.1f} of {len(result.tickers)}")
+                    m[3].metric("Sharpe", f"{result.sharpe:.2f}")
+                    m[4].metric("Sortino", f"{result.sortino:.2f}")
+
+                    st.markdown("**Weight against risk contribution**")
+                    st.caption(
+                        "The headline of this tab. A holding's share of portfolio risk is not "
+                        "its weight: it depends on how it moves with everything else. A "
+                        "holding can even carry negative risk contribution, meaning it "
+                        "reduces total volatility rather than adding to it."
+                    )
+
+                    contrib = pd.DataFrame({
+                        "Holding": list(result.tickers),
+                        "Weight": [f"{w:.1%}" for w in result.weights],
+                        "Risk share": [f"{result.percent_contribution[t]:.1%}"
+                                       for t in result.tickers],
+                        "Own volatility": [
+                            f"{float(np.sqrt(result.covariance.loc[t, t])):.1%}"
+                            for t in result.tickers],
+                    })
+                    st.dataframe(contrib, use_container_width=True, hide_index=True)
+
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(x=list(result.tickers), y=result.weights,
+                                         name="Weight", marker_color=GREY))
+                    fig.add_trace(go.Bar(
+                        x=list(result.tickers),
+                        y=[result.percent_contribution[t] for t in result.tickers],
+                        name="Share of risk", marker_color=RED))
+                    fig.update_layout(barmode="group", yaxis_tickformat=".0%")
+                    chart(fig, 300)
+
+                    st.markdown("**Correlation**")
+                    fig = go.Figure(data=go.Heatmap(
+                        z=result.correlation.to_numpy(),
+                        x=list(result.correlation.columns),
+                        y=list(result.correlation.index),
+                        zmin=-1, zmax=1, colorscale="RdBu", reversescale=True,
+                        text=result.correlation.round(2).to_numpy(),
+                        texttemplate="%{text}", showscale=True))
+                    chart(fig, 300)
+
+                    portfolio_log = portfolio_returns_series(data, weights)
+                    p_var = historical_var(portfolio_log, confidence)
+                    p_es = historical_expected_shortfall(portfolio_log, confidence)
+                    naive = sum(
+                        abs(w) * historical_var(data[t], confidence).var_return
+                        for t, w in zip(result.tickers, result.weights))
+
+                    st.markdown("**Portfolio tail risk**")
+                    v = st.columns(3)
+                    v[0].metric(f"{confidence:.0%} 1-day VaR", pct(p_var.var_return))
+                    v[1].metric(f"{confidence:.0%} Expected Shortfall", pct(p_es.es_return))
+                    v[2].metric("Sum of individual VaRs", pct(naive),
+                                delta=f"{p_var.var_return - naive:+.2%}", delta_color="off")
+                    st.caption(
+                        "The third figure is what you would get by adding each holding's own "
+                        "VaR in proportion to its weight. Portfolio VaR is lower because the "
+                        "holdings do not all have their bad days together, and that gap is "
+                        "the diversification benefit expressed in the tail rather than in "
+                        "the variance."
+                    )
+
+                    for w in result.warnings:
+                        st.warning(w)
+                    for n in result.notes:
+                        st.caption(f"ℹ️ {n}")
+
+# =============================== METHODOLOGY =========================================================
+
+with tabs[8]:
     st.markdown("""
 #### What this engine will and will not claim
 

@@ -2,16 +2,16 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 8, 12 and 13 of 14 built and tested.** Data ingestion with validation,
+**Status: Phases 1 to 8 and 11 to 13 of 14 built and tested.** Data ingestion with validation,
 returns, volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, Expected Shortfall,
-GARCH(1,1) conditional volatility, formal VaR backtesting and an interactive dashboard over
-all of it run and are tested against both synthetic edge cases and real market history. Backtesting was pulled forward from its
-roadmap position because it is what decides whether the GARCH work was worth it, and the
-answer turned out to be a qualified yes rather than a clean one (see
+GARCH(1,1) conditional volatility, formal VaR backtesting, portfolio risk and an interactive
+dashboard over all of it run and are tested against both synthetic edge cases and real market
+history. Backtesting was pulled forward from its roadmap position because it is what decides
+whether the GARCH work was worth it, and the answer turned out to be a qualified yes rather
+than a clean one (see
 [Phase 12](#phase-12-backtesting-and-whether-garch-was-actually-worth-it)). Fundamental and
-valuation risk (reusing Modules 1 and 2), stress testing and portfolio risk are not built
-yet. This README says so rather than implying a finished risk engine.
-See [Roadmap](#roadmap).
+valuation risk (reusing Modules 1 and 2) and stress testing are not built yet. This README
+says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -50,7 +50,9 @@ timestamped and classified as **DELAYED** or **STALE** by how old the data actua
 (`DataStatus.classification` in `data_loader.py`), never **LIVE**, regardless of how fresh a
 given pull happens to be. "Live" in this module means *refreshable on demand and
 recalculated from the current data*, not *real-time*, and the dashboard states that
-distinction rather than implying more than the data source can support.
+distinction rather than implying more than the data source can support. The dashboard shows
+the fetch time and source as a quiet caption rather than a coloured badge, since the point is
+that the claim is accurate, not that it is loud.
 
 ## Phase 1: data ingestion and validation
 
@@ -419,6 +421,62 @@ capital multiplier, 10 or more red.
 have low power, so "not rejected" is a much weaker statement than it appears, and a mediocre
 model routinely survives them. Sample size travels with every result for that reason.
 
+## Phase 11: portfolio risk
+
+    sigma_p = sqrt(w' * Sigma * w)
+
+Portfolio variance is a quadratic form, not a weighted average, and every result in this
+phase follows from that one fact. Two holdings each at 25% volatility combine into something
+less volatile than 25% unless they are perfectly correlated, and that reduction is the only
+thing in finance that is genuinely free.
+
+**Simple returns, not log returns.** The rest of the engine works in log returns because they
+add across *time*. A portfolio return is the weighted sum of its holdings on the same day,
+which is addition across *assets*, and log returns are not additive that way. The error is
+small enough to pass inspection and grows with volatility, so the conversion is explicit and
+a test pins the difference against the naive version.
+
+**Risk contribution is the headline, because it is where intuition fails.** A holding's share
+of portfolio risk is not its weight: it is weight times marginal contribution, which depends
+on how the holding correlates with everything else. On an equally weighted portfolio of
+Apple, Microsoft, Johnson & Johnson, Exxon and Coca-Cola, every weight is 20% and the risk
+shares are not:
+
+| Holding | Weight | Share of portfolio risk |
+|---|---|---|
+| Apple | 20% | **30.0%** |
+| Microsoft | 20% | **26.0%** |
+| Exxon | 20% | 19.9% |
+| Coca-Cola | 20% | **13.0%** |
+| Johnson & Johnson | 20% | **11.0%** |
+
+Apple carries nearly three times Johnson & Johnson's risk for the same money. The
+contributions sum exactly to portfolio volatility by Euler's theorem, which is asserted at
+runtime rather than assumed: a mismatch means the decomposition is wrong, not imprecise.
+
+A holding can also carry *negative* risk contribution when it moves against the rest of the
+book, meaning it reduces total volatility rather than adding to it. No weight-based view of a
+portfolio can show that.
+
+**Diversification is measured, not asserted.** That same portfolio has a weighted average
+volatility of 23.4% and an actual volatility of 14.2%, so diversification removed 39.2%. The
+benefit shows in the tail too: portfolio VaR at 99% is 2.37% against 4.07% for the weighted
+sum of the holdings' individual VaRs, because they do not all have their bad days together.
+
+**Concentration gets a number rather than an eyeball.** The Herfindahl index and the effective
+holdings count it implies say in one figure what a holdings count cannot: ten positions where
+one is 85% of the book has an effective count below two, and the app says so.
+
+**Minimum variance is offered and the rest of the frontier is not.** It is the one point on
+the efficient frontier that needs no return forecast, and expected returns are estimated with
+far more error than covariances and would dominate any other point. On the portfolio above it
+moves weight from Apple (1.3%) into Johnson & Johnson (35.0%) and Coca-Cola (32.6%), taking
+volatility from 14.2% to 12.6%.
+
+**Sharpe and Sortino disagree on purpose.** Sharpe penalises upside volatility exactly as much
+as downside; Sortino uses downside deviation only. Where they diverge the return distribution
+is asymmetric, and the app says so rather than leaving the reader to compare two numbers.
+
 ## Structure
 
 ```text
@@ -437,7 +495,8 @@ risk_engine/
 │   ├── var_monte_carlo.py      simulated VaR, three draw methods, convergence and error
 │   ├── expected_shortfall.py   ES per method, coherence demonstration, comparison table
 │   ├── garch.py                GARCH(1,1), ARCH-LM, forecasting, conditional VaR
-│   └── backtesting.py          Kupiec, Christoffersen, Basel traffic light, comparison
+│   ├── backtesting.py          Kupiec, Christoffersen, Basel traffic light, comparison
+│   └── portfolio.py            correlation, risk contribution, concentration, Sharpe/Sortino
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -457,7 +516,6 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 - **Phase 9** Fundamental risk, reusing Module 1's ratios rather than recomputing them
 - **Phase 10** Valuation risk and stress testing, reusing Module 2's DCF and WACC, including
   reverse stress testing against the current market price
-- **Phase 11** Portfolio risk: correlation, risk contribution, concentration, Sharpe/Sortino
 - **Phase 14** Integration with Modules 1 and 2 into one risk view
 
 ## Known limitations so far
