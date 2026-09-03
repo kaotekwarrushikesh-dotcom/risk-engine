@@ -2,17 +2,17 @@
 
 > Quantifying market, fundamental and scenario risk through a live, interactive risk-management system.
 
-**Status: Phases 1 to 13 of 14 built and tested.** Data ingestion with validation,
+**Status: all 14 phases built and tested.** Data ingestion with validation,
 returns, volatility, beta, drawdown, historical/parametric/Monte Carlo VaR, Expected Shortfall,
 GARCH(1,1) conditional volatility, formal VaR backtesting, portfolio risk, fundamental risk
-from Module 1's accounts, valuation risk and stress testing on Module 2's DCF, and an
-interactive dashboard over all of it run and are tested against both synthetic edge cases and
-real market history. Backtesting was pulled forward from its roadmap position because it is what decides
-whether the GARCH work was worth it, and the answer turned out to be a qualified yes rather
-than a clean one (see
-[Phase 12](#phase-12-backtesting-and-whether-garch-was-actually-worth-it)). Fundamental and
-Only Phase 14, which merges all three engines into a single view, is not built yet. This
-README says so rather than implying a finished risk engine. See [Roadmap](#roadmap).
+from Module 1's accounts, valuation risk and stress testing on Module 2's DCF, a composite view
+combining all three, and an interactive dashboard over all of it run and are tested against
+both synthetic edge cases and real market history. Backtesting was pulled forward from its
+roadmap position because it is what decides whether the GARCH work was worth it, and the
+answer turned out to be a qualified yes rather than a clean one (see
+[Phase 12](#phase-12-backtesting-and-whether-garch-was-actually-worth-it)). See
+[Phase 14](#phase-14-one-risk-view-built-from-all-three-engines) for what "complete" means
+here and does not mean.
 
 ## Quick start
 
@@ -549,6 +549,67 @@ Stress scenarios shock the discount rate and terminal outlook, which this engine
 rigorously. A revenue or margin shock belongs in Module 2's own scenario engine, which rebuilds
 the forecast properly, and a cruder copy here would be worse than not having one.
 
+## Phase 14: one risk view, built from all three engines
+
+Phases 1 to 8 answer how much the price moves. Phase 9 answers how fragile the business is.
+Phase 10 answers how much the valuation depends on its assumptions. Nothing before this phase
+put the three side by side, and each is computed from a different source: this engine's own
+market data, Module 1's filed accounts, and Module 2's DCF. This phase composes them.
+
+**The composite score is the least interesting number this phase produces.** A single figure
+that blends three independent readings is a worse answer than any one of the three read on its
+own, because it can hide exactly the disagreement worth knowing about. The useful output is
+naming *where* the three disagree, and each kind of disagreement is a different warning:
+
+| Disagreement | What it means |
+|---|---|
+| Fundamental risk exceeds market risk | A quiet share price sitting over a weakening balance sheet. Price volatility cannot see leverage building, so calm is not evidence the accounts support (Phase 9's own finding, reused here rather than re-derived) |
+| Valuation is fragile and the volatility regime is elevated | The inputs a sensitive DCF depends on (beta, the discount rate) are least stable exactly when the valuation is most sensitive to them |
+| Fundamentals are deteriorating and the terminal value dominates | Most of the valuation rests on a perpetuity assumption about a business whose own recent trend is the assumption's biggest risk |
+
+**Verified live, and the three cases came back exactly as the earlier phases would predict:**
+
+| Ticker | Market | Fundamental | Valuation | Composite | Divergence found |
+|---|---|---|---|---|---|
+| Apple | 37 | 41 | 60 | 45 (Moderate) | none |
+| Pfizer | 49 | 52 | 75 | 58 (Elevated) | **two, both critical/elevated** |
+| Tesla | 96 | 25 | 52 | 62 (Elevated) | market exceeds fundamental (note) |
+
+Pfizer fires both flags that matter: fundamental risk (52) exceeding market risk (26 on the
+same volatility-only basis Phase 9 uses), and 71% of enterprise value sitting in a terminal
+value that assumes trend continuation while fundamental deterioration scores 67/100. Both
+reproduce, independently, the same finding Phase 9 reached on its own when it first flagged
+Pfizer's post-pandemic decline. Tesla shows the opposite pattern: extreme market risk (96) far
+above a modest fundamental score (25), the volatile-share-over-a-solid-business case rather
+than the dangerous one. Apple shows genuine agreement across all three, and correctly raises no
+divergence at all rather than manufacturing one.
+
+**Every dimension is put on the same 0-100, higher-is-riskier scale**, matching Module 1's
+health score and Phase 9's own convention. Market risk is built from volatility, 99% VaR, max
+drawdown and beta, each floor/ceiling scored and combined by weight, the identical pattern
+Phase 9 and Module 1 both use. A low-confidence beta (R-squared near zero) is excluded rather
+than trusted at face value, the same standard Phase 3 itself applies to a beta reading. The
+current GARCH volatility regime nudges the market score by a bounded amount rather than
+entering as a fifth weighted metric, since it is context for reading the other four rather than
+an independent measurement.
+
+Valuation risk is mapped onto the same scale from three components: how much of the value sits
+beyond the forecast (assumption dependence), how far a 25 basis point discount-rate move swings
+the answer (fragility), and how far the model's own WACC sits from the market-implied rate
+Module 2 solves for. The third is excluded, and says so, when no market-implied rate could be
+solved, which happens when the DCF and the price are too far apart for the search range to
+reach.
+
+**A dimension that is unavailable is dropped and the remaining weights renormalised**, not
+penalised. An index has no filed statements and no EBITDA to run a DCF on, so `^GSPC` returns a
+composite that is the market score alone, with `fundamental` and `valuation` both listed as
+excluded rather than scored as safe. This is Module 1's own rule for a missing metric, applied
+here to a missing dimension: a gap in the data must never be read as a clean bill of health.
+
+Every function that scores or combines is pure, taking already-computed inputs, so the
+composition logic is tested without a network call; only `assess()`, which fetches live data
+and calls Phases 9 and 10, needs one.
+
 ## Structure
 
 ```text
@@ -570,7 +631,8 @@ risk_engine/
 │   ├── backtesting.py          Kupiec, Christoffersen, Basel traffic light, comparison
 │   ├── portfolio.py            correlation, risk contribution, concentration, Sharpe/Sortino
 │   ├── fundamental.py          balance-sheet fragility from Module 1's ratios
-│   └── valuation_risk.py       sensitivity and reverse stress testing on Module 2's DCF
+│   ├── valuation_risk.py       sensitivity and reverse stress testing on Module 2's DCF
+│   └── composite.py            market, fundamental and valuation risk on one scale
 ├── tests/
 ├── notebooks/
 ├── dashboard/
@@ -587,7 +649,14 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 
 ## Roadmap
 
-- **Phase 14** Integration with Modules 1 and 2 into one risk view
+All 14 phases are built. Ideas beyond the original scope, not committed to:
+
+- Stress testing against named historical scenarios (2008, 2020, 2022) rather than parametric
+  shocks alone
+- A saved-portfolio mode, so the composite view runs across a book rather than one ticker at a
+  time
+- Asymmetric GARCH (GJR-GARCH or EGARCH), which Phase 8's own findings named as the fix for the
+  Nifty backtest's coverage failure
 
 ## Known limitations so far
 
@@ -635,3 +704,12 @@ Nifty 50 (`^NSEI`), DAX (`^GDAXI`).
 11. **Backtests at 250 observations have low power.** "Not rejected" is a much weaker claim
    than it looks, and a mediocre model routinely survives. Sample size travels with every
    backtest result for that reason, but no amount of reporting makes a short sample decisive.
+12. **The composite's default weights (market 40%, fundamental 30%, valuation 30%) are a
+   stated choice, not a derived one.** Nothing in the data determines how much market risk
+   should count against fundamental risk; a different, equally defensible analyst could
+   reasonably weight them differently. `compose()` accepts custom weights precisely because
+   the default should not be mistaken for a discovered fact.
+13. **The divergence checks are the three that seemed most worth building, not an exhaustive
+   set.** Other genuine disagreements between the three dimensions are possible and are not
+   yet checked for; the three implemented are the ones with a clear, testable real-world
+   reading rather than every combination the data happens to allow.

@@ -34,6 +34,7 @@ from risk_engine.expected_shortfall import (
     historical_expected_shortfall,
     parametric_expected_shortfall,
 )
+from risk_engine.composite import assess as composite_risk
 from risk_engine.fundamental import assess as fundamental_risk
 from risk_engine.fundamental import compare_with_market_risk
 from risk_engine.valuation_risk import assess as valuation_risk
@@ -177,7 +178,7 @@ st.divider()
 
 tabs = st.tabs(["Overview", "Volatility", "Beta & drawdown", "Value at Risk",
                 "Expected Shortfall", "GARCH", "Backtest", "Portfolio",
-                "Fundamental", "Valuation", "Methodology"])
+                "Fundamental", "Valuation", "Composite", "Methodology"])
 
 # =============================== OVERVIEW =====================================================
 
@@ -729,7 +730,7 @@ with tabs[7]:
                     for n in result.notes:
                         st.caption(f"ℹ️ {n}")
 
-# =============================== METHODOLOGY =========================================================
+# =============================== FUNDAMENTAL ==========================================================
 
 with tabs[8]:
     st.markdown("#### Fundamental risk: how fragile is the business?")
@@ -908,9 +909,111 @@ with tabs[9]:
     else:
         st.caption("Runs Module 2 live and re-values the company 30+ times, so it is on demand.")
 
-# =============================== METHODOLOGY =========================================================
+# =============================== COMPOSITE ============================================================
 
 with tabs[10]:
+    st.markdown("#### One risk view: market, fundamental and valuation together")
+    st.caption(
+        "Each earlier tab answers a different question: how much the price moves, how "
+        "fragile the business is, how much the valuation depends on its assumptions. This "
+        "combines the three onto one scale, weighted and renormalised over whatever is "
+        "actually available. The composite score is the least interesting part of it; the "
+        "useful part is naming where the three disagree, because each disagreement is a "
+        "different warning."
+    )
+
+    if st.button("Build composite view", key="run_composite"):
+        with st.spinner("Running market, fundamental and valuation risk together..."):
+            try:
+                composite = composite_risk(ticker)
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not build a composite view for {ticker}: {exc}")
+                composite = None
+
+        if composite is not None:
+            st.markdown(f"**{composite.name}**")
+
+            c = st.columns(4)
+            c[0].metric("Composite risk", f"{composite.overall:.0f}/100",
+                       delta=composite.rating, delta_color="off")
+            c[1].metric("Market", f"{composite.market.overall:.0f}",
+                       delta=f"{composite.weights_used.get('market', 0):.0%} weight",
+                       delta_color="off")
+            c[2].metric("Fundamental",
+                       f"{composite.fundamental.overall_risk:.0f}"
+                       if composite.fundamental else "excluded",
+                       delta=f"{composite.weights_used.get('fundamental', 0):.0%} weight"
+                       if composite.fundamental else None, delta_color="off")
+            c[3].metric("Valuation",
+                       f"{composite.valuation_score:.0f}" if composite.valuation_score is not None
+                       else "excluded",
+                       delta=f"{composite.weights_used.get('valuation', 0):.0%} weight"
+                       if composite.valuation_score is not None else None, delta_color="off")
+
+            if composite.excluded_dimensions:
+                st.caption(
+                    f"Excluded from the composite: {', '.join(composite.excluded_dimensions)}. "
+                    "The remaining weights are renormalised rather than penalised for what "
+                    "could not be computed."
+                )
+
+            fig = go.Figure(go.Bar(
+                x=["Market", "Fundamental", "Valuation"],
+                y=[composite.market.overall,
+                   composite.fundamental.overall_risk if composite.fundamental else 0,
+                   composite.valuation_score if composite.valuation_score is not None else 0],
+                marker_color=[
+                    RED if composite.market.overall >= 70 else
+                    (AMBER if composite.market.overall >= 50 else GREEN),
+                    (RED if composite.fundamental and composite.fundamental.overall_risk >= 70
+                     else (AMBER if composite.fundamental and composite.fundamental.overall_risk >= 50
+                           else GREEN)) if composite.fundamental else GREY,
+                    (RED if composite.valuation_score is not None and composite.valuation_score >= 70
+                     else (AMBER if composite.valuation_score is not None
+                           and composite.valuation_score >= 50 else GREEN))
+                    if composite.valuation_score is not None else GREY,
+                ],
+            ))
+            fig.update_layout(yaxis_range=[0, 100], yaxis_title="Risk score (0-100)")
+            chart(fig, 280)
+
+            st.markdown("**Where the dimensions disagree**")
+            st.caption(
+                "The composite score alone cannot show this: three very different pictures "
+                "can average to the same middling number. This is checked directly instead."
+            )
+            if composite.divergences:
+                for d in composite.divergences:
+                    colour = {"critical": RED, "elevated": AMBER, "note": BLUE}[d.severity]
+                    box = st.error if d.severity == "critical" else (
+                        st.warning if d.severity == "elevated" else st.info)
+                    box(d.finding)
+            else:
+                st.success(
+                    "No material disagreement found between the dimensions available for "
+                    "this ticker."
+                )
+
+            for note in composite.notes:
+                st.caption(f"ℹ️ {note}")
+
+            with st.expander("What each dimension is measuring"):
+                st.markdown("""
+| Dimension | Question | Built from |
+|---|---|---|
+| Market | How much does the price move? | Volatility, 99% VaR, max drawdown, beta, current regime |
+| Fundamental | How fragile is the business? | Module 1's filed ratios: leverage, liquidity, earnings quality, deterioration |
+| Valuation | How much does the value depend on its assumptions? | Module 2's DCF: terminal-value dependence, discount-rate sensitivity, gap to the market-implied rate |
+""")
+    else:
+        st.caption(
+            "Runs the market metrics plus Phases 9 and 10 together, so it is on demand "
+            "rather than on every page load."
+        )
+
+# =============================== METHODOLOGY =========================================================
+
+with tabs[11]:
     st.markdown("""
 #### What this engine will and will not claim
 
